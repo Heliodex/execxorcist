@@ -52,7 +52,7 @@ func getProcsPath() string {
 }
 
 func idHash(data []string) string {
-	return hex.EncodeToString(sha3.SumSHAKE256([]byte(strings.Join(data, "")), 3)) // short hash for identification
+	return hex.EncodeToString(sha3.SumSHAKE256([]byte(strings.Join(data, " ")), 3)) // short hash for identification
 }
 
 type Process struct {
@@ -107,26 +107,25 @@ func list() (err error) {
 			continue
 		}
 
-		err = proc.Signal(syscall.Signal(0))
-		if err == nil {
+		if err = proc.Signal(syscall.Signal(0)); err == nil {
 			procs[i].running = true
 			continue
 		}
 
-		if err.Error() == "os: process already finished" {
-			continue
+		if err.Error() != "os: process already finished" {
+			procs[i].running = true
 		}
-
-		fmt.Println("Checking process", procs[i].pid, ":", err)
-		procs[i].running = true
 	}
 
 	for _, proc := range procs {
-		status := "stopped"
+		var status string
 		if proc.running {
 			status = "running"
+		} else {
+			status = "stopped"
+			proc.pid = 0
 		}
-		fmt.Printf("%s | PID  %6d | %s | %s\n", proc.hash, proc.pid, status, proc.args)
+		fmt.Printf("%s | PID %7d | %s | %s\n", proc.hash, proc.pid, status, proc.args)
 	}
 	return
 }
