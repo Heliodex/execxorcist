@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha3"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -130,32 +130,89 @@ func list() (err error) {
 	return
 }
 
-func run(args []string) (err error) {
-	hashPath, logsPath, procsPath := getHashPath(), getLogsPath(), getProcsPath()
-	outHash := idHash(args)
+func checkProc(hash, procsPath string) (exists bool) {
+	_, err := os.Stat(filepath.Join(procsPath, hash))
+	return err == nil
+}
 
-	// check if file exists in procsPaath
+func openLogs(hash string) (outfile, errfile *os.File, close func(), err error) {
+	const perms = os.O_CREATE | os.O_RDWR | os.O_APPEND
+	logsPath := getLogsPath()
 
-	if _, err = os.Stat(filepath.Join(procsPath, outHash)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("failed to stat file: %w", err)
-	} else if err == nil {
-		fmt.Println("This process is already registered!")
+	outfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_out"), perms, 0o644)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to open output file: %w", err)
+	}
+
+	errfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_err"), perms, 0o644)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to open error file: %w", err)
+	}
+
+	return outfile, errfile, func() {
+		outfile.Close()
+		errfile.Close()
+	}, nil
+}
+
+func writeLogs(file *os.File) (err error) {
+	w := &bytes.Buffer{}
+	file.Seek(0, 0) // Reset file pointer to the beginning
+
+	if _, err = file.WriteTo(w); err != nil {
 		return
 	}
 
-	// create file if it does not exist
-	const perms = os.O_CREATE | os.O_WRONLY | os.O_APPEND
-	outfile, err := os.OpenFile(filepath.Join(logsPath, outHash+"_out"), perms, 0o644)
-	if err != nil {
-		return fmt.Errorf("failed to open output file: %w", err)
-	}
-	// defer outfile.Close()
+	// get last 15 lines
+	lines := strings.Split(w.String(), "\n")
+	lines = lines[max(len(lines)-15, 0):]
 
-	errfile, err := os.OpenFile(filepath.Join(logsPath, outHash+"_err"), perms, 0o644)
-	if err != nil {
-		return fmt.Errorf("failed to open error file: %w", err)
+	for _, line := range lines {
+		fmt.Println("    ", line)
 	}
-	// defer errfile.Close()
+
+	return
+}
+
+func logs(hash string) (err error) {
+	procsPath := getProcsPath()
+	if !checkProc(hash, procsPath) {
+		return fmt.Errorf("process with hash %s does not exist", hash)
+	}
+
+	outfile, errfile, closeFiles, err := openLogs(hash)
+	if err != nil {
+		return fmt.Errorf("failed to open log files: %w", err)
+	}
+	defer closeFiles()
+
+	fmt.Println("Logs for process", hash)
+
+	fmt.Println("Output logs:")
+	if err = writeLogs(outfile); err != nil {
+		return fmt.Errorf("failed to write output logs: %w", err)
+	}
+
+	fmt.Println("Error logs:")
+	if err = writeLogs(errfile); err != nil {
+		return fmt.Errorf("failed to write error logs: %w", err)
+	}
+
+	return
+}
+
+func run(args []string) (err error) {
+	hashPath, procsPath := getHashPath(), getProcsPath()
+	outHash := idHash(args)
+	if checkProc(outHash, procsPath) {
+		return fmt.Errorf("process with hash %s already exists or cannot be accessed", outHash)
+	}
+
+	outfile, errfile, closeFiles, err := openLogs(outHash)
+	if err != nil {
+		return fmt.Errorf("failed to open log files: %w", err)
+	}
+	defer closeFiles()
 
 	fmt.Println("Starting process...")
 
@@ -218,6 +275,17 @@ func main() {
 	case "list":
 		if err := list(); err != nil {
 			fmt.Println("Error listing processes:", err)
+			os.Exit(1)
+		}
+
+	case "logs":
+		if nargs < 3 {
+			fmt.Println("Usage: logs <hash>")
+			os.Exit(1)
+		}
+
+		if err := logs(os.Args[2]); err != nil {
+			fmt.Println("Error retrieving logs:", err)
 			os.Exit(1)
 		}
 
