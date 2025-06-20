@@ -201,6 +201,29 @@ func logs(hash string) (err error) {
 	return
 }
 
+func remove(hash string) (err error) {
+	procsPath := getProcsPath()
+	if !checkProc(hash, procsPath) {
+		return fmt.Errorf("process with hash %s does not exist", hash)
+	}
+
+	paths := []string{
+		filepath.Join(procsPath, hash),
+		filepath.Join(getHashPath(), hash),
+		filepath.Join(getLogsPath(), hash+"_out"),
+		filepath.Join(getLogsPath(), hash+"_err"),
+	}
+
+	for _, path := range paths {
+		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove %s: %w", path, err)
+		}
+	}
+
+	fmt.Println("Successfully removed process with hash", hash)
+	return
+}
+
 func run(args []string) (err error) {
 	hashPath, procsPath := getHashPath(), getProcsPath()
 	outHash := idHash(args)
@@ -289,6 +312,17 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "remove":
+		if nargs < 3 {
+			fmt.Println("Usage: remove <hash>")
+			os.Exit(1)
+		}
+
+		if err := remove(os.Args[2]); err != nil {
+			fmt.Println("Error removing process:", err)
+			os.Exit(1)
+		}
+
 	case "run":
 		if nargs < 3 {
 			fmt.Println("Usage: run <program> [args...]")
@@ -297,6 +331,7 @@ func main() {
 
 		if err := run(os.Args[2:]); err != nil {
 			fmt.Println("Error starting main process:", err)
+			os.Exit(1)
 		}
 
 	default:
