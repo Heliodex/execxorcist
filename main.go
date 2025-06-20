@@ -61,75 +61,6 @@ type Process struct {
 	running    bool
 }
 
-func list() (err error) {
-	procsPath := getProcsPath()
-	files, err := os.ReadDir(procsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read processes directory: %w", err)
-	}
-
-	if len(files) == 0 {
-		fmt.Println("No processes running.")
-		return
-	}
-
-	fmt.Println("Processes:")
-
-	procs := make([]Process, len(files))
-
-	for i, file := range files {
-		if file.IsDir() {
-			continue // Skip directories (they shouldn't be here anyway)
-		}
-		// fmt.Println("-", file.Name())
-
-		procs[i].hash = file.Name()
-
-		argsFilePath := filepath.Join(getHashPath(), file.Name())
-		argsData, err := os.ReadFile(argsFilePath)
-		if err != nil {
-			fmt.Println("Error reading args file:", err)
-		} else {
-			procs[i].args = string(argsData)
-		}
-
-		procFilePath := filepath.Join(procsPath, file.Name())
-		procData, err := os.ReadFile(procFilePath)
-		if err != nil {
-			fmt.Println("Error reading process file:", err)
-		} else {
-			fmt.Sscanf(string(procData), "%d", &procs[i].pid)
-		}
-
-		// check if process is running
-		proc, err := os.FindProcess(procs[i].pid)
-		if err != nil {
-			continue
-		}
-
-		if err = proc.Signal(syscall.Signal(0)); err == nil {
-			procs[i].running = true
-			continue
-		}
-
-		if err.Error() != "os: process already finished" {
-			procs[i].running = true
-		}
-	}
-
-	for _, proc := range procs {
-		var status string
-		if proc.running {
-			status = "running"
-		} else {
-			status = "stopped"
-			proc.pid = 0
-		}
-		fmt.Printf("%s | PID %7d | %s | %s\n", proc.hash, proc.pid, status, proc.args)
-	}
-	return
-}
-
 func checkProc(hash, procsPath string) (exists bool) {
 	_, err := os.Stat(filepath.Join(procsPath, hash))
 	return err == nil
@@ -171,6 +102,124 @@ func writeLogs(file *os.File) (err error) {
 		fmt.Println("    ", line)
 	}
 
+	return
+}
+
+func getArgs(hash string) (args string, err error) {
+	argsFilePath := filepath.Join(getHashPath(), hash)
+	argsData, err := os.ReadFile(argsFilePath)
+	if err != nil {
+		return
+	}
+
+	return string(argsData), nil
+}
+
+func getPid(hash string) (pid int, err error) {
+	procFilePath := filepath.Join(getProcsPath(), hash)
+	procData, err := os.ReadFile(procFilePath)
+	if err != nil {
+		return
+	}
+
+	fmt.Sscanf(string(procData), "%d", &pid)
+	return
+}
+
+func kill(hash string) (err error) {
+	procsPath := getProcsPath()
+	if !checkProc(hash, procsPath) {
+		return fmt.Errorf("process with hash %s does not exist", hash)
+	}
+
+	pid, err := getPid(hash)
+	if err != nil {
+		return fmt.Errorf("failed to get process ID: %w", err)
+	}
+
+	if pid == -1 {
+		return fmt.Errorf("process with hash %s has already been killed", hash)
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process with PID %d: %w", pid, err)
+	}
+
+	if err = proc.Kill(); err != nil {
+		return fmt.Errorf("failed to kill process with PID %d: %w", pid, err)
+	}
+
+	fmt.Println("Successfully killed process with hash", hash, "and PID", pid)
+
+	if err = os.WriteFile(filepath.Join(procsPath, hash), []byte("-1\n"), 0o644); err != nil {
+		return fmt.Errorf("failed to update process file: %w", err)
+	}
+	return
+}
+
+func list() (err error) {
+	procsPath := getProcsPath()
+	files, err := os.ReadDir(procsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read processes directory: %w", err)
+	}
+
+	if len(files) == 0 {
+		fmt.Println("No processes running.")
+		return
+	}
+
+	fmt.Println("Processes:")
+
+	procs := make([]Process, len(files))
+
+	for i, file := range files {
+		if file.IsDir() {
+			continue // Skip directories (they shouldn't be here anyway)
+		}
+
+		hash := file.Name()
+		procs[i].hash = hash
+
+		if procs[i].args, err = getArgs(hash); err != nil {
+			fmt.Println("Error reading args file:", err)
+		}
+
+		if procs[i].pid, err = getPid(hash); err != nil {
+			fmt.Println("Error reading process file:", err)
+		}
+
+		if procs[i].pid == -1 {
+			procs[i].running = false
+			continue
+		}
+
+		// check if process is running
+		proc, err := os.FindProcess(procs[i].pid)
+		if err != nil {
+			continue
+		}
+
+		if err = proc.Signal(syscall.Signal(0)); err == nil {
+			procs[i].running = true
+			continue
+		}
+
+		if err.Error() != "os: process already finished" {
+			procs[i].running = true
+		}
+	}
+
+	for _, proc := range procs {
+		var status string
+		if proc.running {
+			status = "running"
+		} else {
+			status = "stopped"
+		}
+		fmt.Printf("%s | PID %7d | %s | %s\n", proc.hash, proc.pid, status, proc.args)
+	}
 	return
 }
 
@@ -294,6 +343,17 @@ func main() {
 	switch os.Args[1] {
 	case "help":
 		fmt.Println("WELCOME TO HELP")
+
+	case "kill":
+		if nargs < 3 {
+			fmt.Println("Usage: kill <hash>")
+			os.Exit(1)
+		}
+
+		if err := kill(os.Args[2]); err != nil {
+			fmt.Println("Error killing process:", err)
+			os.Exit(1)
+		}
 
 	case "list":
 		if err := list(); err != nil {
