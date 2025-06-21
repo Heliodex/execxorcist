@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha3"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -274,6 +276,10 @@ func remove(hash string) (err error) {
 }
 
 func run(args []string) (err error) {
+	if len(args) == 0 {
+		return errors.New("no command provided to run")
+	}
+
 	hashPath, procsPath := getHashPath(), getProcsPath()
 	outHash := idHash(args)
 	if checkProc(outHash, procsPath) {
@@ -328,6 +334,32 @@ func run(args []string) (err error) {
 
 	if _, err = hashFile.WriteString(strings.Join(args, " ")); err != nil {
 		return fmt.Errorf("failed to write data to hash file: %w", err)
+	}
+
+	return
+}
+
+func up() (err error) {
+	// read xc.json file in the current directory
+	const configPath = "xc.json"
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return fmt.Errorf("configuration file %s does not exist", configPath)
+	}
+
+	configFile, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read configuration file: %w", err)
+	}
+
+	var config [][]string
+	if err = json.Unmarshal(configFile, &config); err != nil {
+		return fmt.Errorf("failed to parse configuration file: %w", err)
+	}
+
+	for _, args := range config {
+		if err = run(args); err != nil {
+			return fmt.Errorf("failed to run command %v: %w", args, err)
+		}
 	}
 
 	return
@@ -391,6 +423,12 @@ func main() {
 
 		if err := run(os.Args[2:]); err != nil {
 			fmt.Println("Error starting main process:", err)
+			os.Exit(1)
+		}
+
+	case "up":
+		if err := up(); err != nil {
+			fmt.Println("Error starting from configuration file:", err)
 			os.Exit(1)
 		}
 
