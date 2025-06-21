@@ -128,6 +128,46 @@ func getPid(hash string) (pid int, err error) {
 	return
 }
 
+type ProgramConfig struct {
+	WorkDir string   `json:"workdir"`
+	Args    []string `json:"args"`
+}
+
+func readConfig() (config []ProgramConfig, err error) {
+	// read xc.json file in the current directory
+	const configPath = "xc.json"
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("configuration file %s does not exist", configPath)
+	}
+
+	configFile, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read configuration file: %w", err)
+	}
+
+	if err = json.Unmarshal(configFile, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse configuration file: %w", err)
+	}
+
+	return
+}
+
+func down() (err error) {
+	config, err := readConfig()
+	if err != nil {
+		return fmt.Errorf("failed to read configuration: %w", err)
+	}
+
+	for _, c := range config {
+		hash := idHash(c.Args)
+		if err := kill(hash); err != nil {
+			fmt.Printf("failed to stop program %v: %v\n", hash, err)
+		}
+	}
+
+	return
+}
+
 func kill(hash string) (err error) {
 	procsPath := getProcsPath()
 	if !checkProc(hash, procsPath) {
@@ -340,25 +380,14 @@ func run(args []string) (err error) {
 }
 
 func up() (err error) {
-	// read xc.json file in the current directory
-	const configPath = "xc.json"
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return fmt.Errorf("configuration file %s does not exist", configPath)
-	}
-
-	configFile, err := os.ReadFile(configPath)
+	config, err := readConfig()
 	if err != nil {
-		return fmt.Errorf("failed to read configuration file: %w", err)
+		return fmt.Errorf("failed to read configuration: %w", err)
 	}
 
-	var config [][]string
-	if err = json.Unmarshal(configFile, &config); err != nil {
-		return fmt.Errorf("failed to parse configuration file: %w", err)
-	}
-
-	for _, args := range config {
-		if err = run(args); err != nil {
-			return fmt.Errorf("failed to run command %v: %w", args, err)
+	for _, c := range config {
+		if err := run(c.Args); err != nil {
+			fmt.Printf("failed to run command %v: %v\n", c.Args, err)
 		}
 	}
 
@@ -375,6 +404,12 @@ func main() {
 	switch os.Args[1] {
 	case "help":
 		fmt.Println("WELCOME TO HELP")
+
+	case "down":
+		if err := down(); err != nil {
+			fmt.Println("Error killing from configuration file:", err)
+			os.Exit(1)
+		}
 
 	case "kill":
 		if nargs < 3 {

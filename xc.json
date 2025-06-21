@@ -1,1 +1,8 @@
-[["./example/example", "50"], ["./example/example", "25"]]
+[
+	{
+		"args": ["./example/example", "50"]
+	},
+	{
+		"args": ["./example/example", "25"]
+	}
+]
