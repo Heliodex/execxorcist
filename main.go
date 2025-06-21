@@ -152,22 +152,6 @@ func readConfig() (config []ProgramConfig, err error) {
 	return
 }
 
-func down() (err error) {
-	config, err := readConfig()
-	if err != nil {
-		return fmt.Errorf("failed to read configuration: %w", err)
-	}
-
-	for _, c := range config {
-		hash := idHash(c.Args)
-		if err := kill(hash); err != nil {
-			fmt.Printf("failed to stop program %v: %v\n", hash, err)
-		}
-	}
-
-	return
-}
-
 func kill(hash string) (err error) {
 	procsPath := getProcsPath()
 	if !checkProc(hash, procsPath) {
@@ -176,7 +160,7 @@ func kill(hash string) (err error) {
 
 	pid, err := getPid(hash)
 	if err != nil {
-		return fmt.Errorf("failed to get process ID: %w", err)
+		return fmt.Errorf("failed to get PID: %w", err)
 	}
 
 	if pid == -1 {
@@ -199,6 +183,23 @@ func kill(hash string) (err error) {
 	}
 	return
 }
+
+func killAll() (err error) {
+	config, err := readConfig()
+	if err != nil {
+		return fmt.Errorf("failed to read configuration: %w", err)
+	}
+
+	for _, c := range config {
+		hash := idHash(c.Args)
+		if err := kill(hash); err != nil {
+			fmt.Printf("failed to kill program %v: %v\n", hash, err)
+		}
+	}
+	return
+}
+
+const alreadyFinished = "os: process already finished"
 
 func list() (err error) {
 	procsPath := getProcsPath()
@@ -248,7 +249,7 @@ func list() (err error) {
 			continue
 		}
 
-		if err.Error() != "os: process already finished" {
+		if err.Error() != alreadyFinished {
 			procs[i].running = true
 		}
 	}
@@ -288,7 +289,6 @@ func logs(hash string) (err error) {
 	if err = writeLogs(errfile); err != nil {
 		return fmt.Errorf("failed to write error logs: %w", err)
 	}
-
 	return
 }
 
@@ -296,6 +296,11 @@ func remove(hash string) (err error) {
 	procsPath := getProcsPath()
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
+	}
+
+	fmt.Println("Attempting to kill process with hash", hash)
+	if err = kill(hash); err != nil {
+		fmt.Println("Error killing process:", err)
 	}
 
 	paths := []string{
@@ -314,6 +319,22 @@ func remove(hash string) (err error) {
 	fmt.Println("Successfully removed process with hash", hash)
 	return
 }
+
+func removeAll() (err error) {
+	config, err := readConfig()
+	if err != nil {
+		return fmt.Errorf("failed to read configuration: %w", err)
+	}
+
+	for _, c := range config {
+		hash := idHash(c.Args)
+		if err := remove(hash); err != nil {
+			fmt.Printf("failed to remove program %v: %v\n", hash, err)
+		}
+	}
+	return
+}
+
 
 func run(args []string) (err error) {
 	if len(args) == 0 {
@@ -361,7 +382,7 @@ func run(args []string) (err error) {
 	}
 	defer procfile.Close()
 
-	if _, err = procfile.WriteString(fmt.Sprintf("%d\n", proc.Pid)); err != nil {
+	if _, err = fmt.Fprintf(procfile, "%d\n", proc.Pid); err != nil {
 		return fmt.Errorf("failed to write process data to file: %w", err)
 	}
 
@@ -375,11 +396,10 @@ func run(args []string) (err error) {
 	if _, err = hashFile.WriteString(strings.Join(args, " ")); err != nil {
 		return fmt.Errorf("failed to write data to hash file: %w", err)
 	}
-
 	return
 }
 
-func up() (err error) {
+func runAll() (err error) {
 	config, err := readConfig()
 	if err != nil {
 		return fmt.Errorf("failed to read configuration: %w", err)
@@ -390,7 +410,6 @@ func up() (err error) {
 			fmt.Printf("failed to run command %v: %v\n", c.Args, err)
 		}
 	}
-
 	return
 }
 
@@ -405,19 +424,13 @@ func main() {
 	case "help":
 		fmt.Println("WELCOME TO HELP")
 
-	case "down":
-		if err := down(); err != nil {
-			fmt.Println("Error killing from configuration file:", err)
-			os.Exit(1)
-		}
-
 	case "kill":
 		if nargs < 3 {
-			fmt.Println("Usage: kill <hash>")
-			os.Exit(1)
-		}
-
-		if err := kill(os.Args[2]); err != nil {
+			if err := killAll(); err != nil {
+				fmt.Println("Error killing from configuration file:", err)
+				os.Exit(1)
+			}
+		} else if err := kill(os.Args[2]); err != nil {
 			fmt.Println("Error killing process:", err)
 			os.Exit(1)
 		}
@@ -441,8 +454,10 @@ func main() {
 
 	case "remove":
 		if nargs < 3 {
-			fmt.Println("Usage: remove <hash>")
-			os.Exit(1)
+			if err := removeAll(); err != nil {
+				fmt.Println("Error removing from configuration file:", err)
+				os.Exit(1)
+			}
 		}
 
 		if err := remove(os.Args[2]); err != nil {
@@ -452,18 +467,12 @@ func main() {
 
 	case "run":
 		if nargs < 3 {
-			fmt.Println("Usage: run <program> [args...]")
-			os.Exit(1)
-		}
-
-		if err := run(os.Args[2:]); err != nil {
+			if err := runAll(); err != nil {
+				fmt.Println("Error starting from configuration file:", err)
+				os.Exit(1)
+			}
+		} else if err := run(os.Args[2:]); err != nil {
 			fmt.Println("Error starting main process:", err)
-			os.Exit(1)
-		}
-
-	case "up":
-		if err := up(); err != nil {
-			fmt.Println("Error starting from configuration file:", err)
 			os.Exit(1)
 		}
 
