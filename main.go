@@ -54,7 +54,16 @@ func getProcsPath() string {
 }
 
 func idHash(data []string) string {
-	return hex.EncodeToString(sha3.SumSHAKE256([]byte(strings.Join(data, " ")), 3)) // short hash for identification
+	return "#" + hex.EncodeToString(sha3.SumSHAKE256([]byte(strings.Join(data, " ")), 3)) // short hash for identification
+}
+
+func isHash(h string) (ok bool) {
+	if len(h) != 7 || h[0] != '#' {
+		return
+	}
+
+	// TODO: check for hex
+	return true
 }
 
 type Process struct {
@@ -128,6 +137,7 @@ func getPid(hash string) (pid int, err error) {
 }
 
 type ProgramConfig struct {
+	Name    string   `json:"name"`
 	WorkDir string   `json:"workdir"`
 	Args    []string `json:"args"`
 }
@@ -147,11 +157,25 @@ func readConfig() (config []ProgramConfig, err error) {
 	if err = json.Unmarshal(configFile, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse configuration file: %w", err)
 	}
-
 	return
 }
 
-func kill(hash string) error {
+func checkName(name string) *ProgramConfig {
+	config, err := readConfig()
+	if err != nil {
+		fmt.Println("Error checking process name:", err)
+		os.Exit(1)
+	}
+
+	for _, c := range config {
+		if c.Name == name {
+			return &c
+		}
+	}
+	return nil
+}
+
+func killHash(hash string) error {
 	procsPath := getProcsPath()
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
@@ -191,7 +215,7 @@ func killConf() error {
 
 	for _, c := range config {
 		hash := idHash(c.Args)
-		if err := kill(hash); err != nil {
+		if err := killHash(hash); err != nil {
 			fmt.Printf("failed to kill program %v: %v\n", hash, err)
 		}
 	}
@@ -265,7 +289,7 @@ func list() (err error) {
 	return
 }
 
-func logs(hash string) error {
+func logsHash(hash string) error {
 	procsPath := getProcsPath()
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
@@ -291,14 +315,29 @@ func logs(hash string) error {
 	return nil
 }
 
-func remove(hash string) (err error) {
+func logsConf() error {
+	config, err := readConfig()
+	if err != nil {
+		return fmt.Errorf("failed to read configuration: %w", err)
+	}
+
+	for _, c := range config {
+		hash := idHash(c.Args)
+		if err := logsHash(hash); err != nil {
+			fmt.Printf("failed to retrieve logs for program %v: %v\n", hash, err)
+		}
+	}
+	return nil
+}
+
+func removeHash(hash string) (err error) {
 	procsPath := getProcsPath()
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
 	}
 
 	fmt.Println("Attempting to kill process with hash", hash)
-	if err = kill(hash); err != nil {
+	if err = killHash(hash); err != nil {
 		fmt.Println("Error killing process:", err)
 	}
 
@@ -327,7 +366,7 @@ func removeConf() error {
 
 	for _, c := range config {
 		hash := idHash(c.Args)
-		if err := remove(hash); err != nil {
+		if err := removeHash(hash); err != nil {
 			fmt.Printf("failed to remove program %v: %v\n", hash, err)
 		}
 	}
@@ -341,8 +380,11 @@ func run(args []string, workDir string) error {
 
 	hashPath, procsPath := getHashPath(), getProcsPath()
 	outHash := idHash(args)
+
+	var restarting bool
 	if checkProc(outHash, procsPath) {
-		return fmt.Errorf("process with hash %s already exists or cannot be accessed", outHash)
+		fmt.Printf("process with hash %s already exists, restarting\n", outHash)
+		restarting = true
 	}
 
 	outfile, errfile, closeFiles, err := openLogs(outHash)
@@ -363,12 +405,14 @@ func run(args []string, workDir string) error {
 			Files: []*os.File{nil, outfile, errfile},
 		})
 	if err != nil {
-		if err := os.Remove(outfile.Name()); err != nil {
-			fmt.Println("Failed to remove output file:", err)
-		}
+		if !restarting {
+			if err := os.Remove(outfile.Name()); err != nil {
+				fmt.Println("Failed to remove output file:", err)
+			}
 
-		if err := os.Remove(errfile.Name()); err != nil {
-			fmt.Println("Failed to remove error file:", err)
+			if err := os.Remove(errfile.Name()); err != nil {
+				fmt.Println("Failed to remove error file:", err)
+			}
 		}
 
 		return fmt.Errorf("failed to start process: %w", err)
@@ -431,8 +475,18 @@ func main() {
 				fmt.Println("Error killing from configuration file:", err)
 				os.Exit(1)
 			}
-		} else if err := kill(os.Args[2]); err != nil {
-			fmt.Println("Error killing process:", err)
+		} else if arg := os.Args[2]; isHash(arg) {
+			if err := killHash(arg); err != nil {
+				fmt.Println("Error killing by hash:", err)
+				os.Exit(1)
+			}
+		} else if c := checkName(arg); c != nil {
+			if err := killHash(idHash(c.Args)); err != nil {
+				fmt.Println("Error killing by name:", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("Command ran with unknown identifier:", arg)
 			os.Exit(1)
 		}
 
@@ -444,12 +498,22 @@ func main() {
 
 	case "logs":
 		if nargs < 3 {
-			fmt.Println("Usage: logs <hash>")
-			os.Exit(1)
-		}
-
-		if err := logs(os.Args[2]); err != nil {
-			fmt.Println("Error retrieving logs:", err)
+			if err := logsConf(); err != nil {
+				fmt.Println("Error retrieving logs from configuration file:", err)
+				os.Exit(1)
+			}
+		} else if arg := os.Args[2]; isHash(arg) {
+			if err := logsHash(arg); err != nil {
+				fmt.Println("Error retrieving logs by hash:", err)
+				os.Exit(1)
+			}
+		} else if c := checkName(arg); c != nil {
+			if err := logsHash(idHash(c.Args)); err != nil {
+				fmt.Println("Error retrieving logs by name:", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("Command ran with unknown identifier:", arg)
 			os.Exit(1)
 		}
 
@@ -459,8 +523,18 @@ func main() {
 				fmt.Println("Error removing from configuration file:", err)
 				os.Exit(1)
 			}
-		} else if err := remove(os.Args[2]); err != nil {
-			fmt.Println("Error removing process:", err)
+		} else if arg := os.Args[2]; isHash(arg) {
+			if err := removeHash(arg); err != nil {
+				fmt.Println("Error removing by hash:", err)
+				os.Exit(1)
+			}
+		} else if c := checkName(arg); c != nil {
+			if err := removeHash(idHash(c.Args)); err != nil {
+				fmt.Println("Error removing by name:", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("Command ran with unknown identifier:", arg)
 			os.Exit(1)
 		}
 
@@ -470,8 +544,18 @@ func main() {
 				fmt.Println("Error starting from configuration file:", err)
 				os.Exit(1)
 			}
-		} else if err := run(os.Args[2:], ""); err != nil {
-			fmt.Println("Error starting main process:", err)
+		} else if arg := os.Args[2]; isHash(arg) {
+			if err := run(os.Args[2:], ""); err != nil {
+				fmt.Println("Error starting process:", err)
+				os.Exit(1)
+			}
+		} else if c := checkName(arg); c != nil {
+			if err := run(c.Args, c.WorkDir); err != nil {
+				fmt.Println("Error starting by name:", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("Command ran with unknown identifier:", arg)
 			os.Exit(1)
 		}
 

@@ -1,9 +1,11 @@
 [
 	{
+		"name": "example1",
 		"workDir": "./example",
 		"args": ["./example", "50"]
 	},
 	{
+		"name": "example2",
 		"workDir": ".",
 		"args": ["./example/example", "25"]
 	}
