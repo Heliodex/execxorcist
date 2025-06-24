@@ -334,7 +334,7 @@ func removeConf() error {
 	return nil
 }
 
-func run(args []string) error {
+func run(args []string, workDir string) error {
 	if len(args) == 0 {
 		return errors.New("no command provided to run")
 	}
@@ -358,7 +358,10 @@ func run(args []string) error {
 	proc, err := os.StartProcess(
 		name,
 		args,
-		&os.ProcAttr{Files: []*os.File{nil, outfile, errfile}})
+		&os.ProcAttr{
+			Dir:   workDir,
+			Files: []*os.File{nil, outfile, errfile},
+		})
 	if err != nil {
 		if err := os.Remove(outfile.Name()); err != nil {
 			fmt.Println("Failed to remove output file:", err)
@@ -404,7 +407,7 @@ func runConf() error {
 	}
 
 	for _, c := range config {
-		if err := run(c.Args); err != nil {
+		if err := run(c.Args, c.WorkDir); err != nil {
 			fmt.Printf("failed to run command %v: %v\n", c.Args, err)
 		}
 	}
@@ -467,7 +470,7 @@ func main() {
 				fmt.Println("Error starting from configuration file:", err)
 				os.Exit(1)
 			}
-		} else if err := run(os.Args[2:]); err != nil {
+		} else if err := run(os.Args[2:], ""); err != nil {
 			fmt.Println("Error starting main process:", err)
 			os.Exit(1)
 		}

@@ -1,8 +1,10 @@
 [
 	{
-		"args": ["./example/example", "50"]
+		"workDir": "./example",
+		"args": ["./example", "50"]
 	},
 	{
+		"workDir": ".",
 		"args": ["./example/example", "25"]
 	}
 ]
