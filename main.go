@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -177,6 +178,8 @@ func checkName(name string) *ProgramConfig {
 
 func killHash(hash string) error {
 	procsPath := getProcsPath()
+	fmt.Println()
+
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
 	}
@@ -291,6 +294,8 @@ func list() (err error) {
 
 func logsHash(hash string) error {
 	procsPath := getProcsPath()
+	fmt.Println()
+
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
 	}
@@ -355,6 +360,7 @@ func removeHash(hash string) (err error) {
 	}
 
 	fmt.Println("Successfully removed process with hash", hash)
+	fmt.Println()
 	return
 }
 
@@ -380,22 +386,27 @@ func run(args []string, workDir string) error {
 
 	hashPath, procsPath := getHashPath(), getProcsPath()
 	outHash := idHash(args)
+	fmt.Println()
 
 	var restarting bool
 	if checkProc(outHash, procsPath) {
-		fmt.Printf("process with hash %s already exists, restarting\n", outHash)
+		fmt.Printf("Process with hash %s already exists, restarting\n", outHash)
 		restarting = true
 	}
 
-	outfile, errfile, closeFiles, err := openLogs(outHash)
+	outfile, errfile, _, err := openLogs(outHash)
 	if err != nil {
 		return fmt.Errorf("failed to open log files: %w", err)
 	}
-	defer closeFiles()
-
-	fmt.Println("Starting process...")
 
 	name := args[0]
+	fmt.Println("Starting process", name)
+
+	if !strings.Contains(name, "/") {
+		if name, err = exec.LookPath(name); err != nil {
+			return fmt.Errorf("failed to find executable: %w", err)
+		}
+	}
 
 	proc, err := os.StartProcess(
 		name,
