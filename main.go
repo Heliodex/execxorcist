@@ -69,8 +69,8 @@ func isHash(h string) (ok bool) {
 
 type Process struct {
 	hash, args string
-	pid        int
-	running    bool
+	pid int
+	running bool
 }
 
 func checkProc(hash, procsPath string) (exists bool) {
@@ -138,9 +138,9 @@ func getPid(hash string) (pid int, err error) {
 }
 
 type ProgramConfig struct {
-	Name    string   `json:"name"`
-	WorkDir string   `json:"workdir"`
-	Args    []string `json:"args"`
+	Name string `json:"name"`
+	WorkDir string `json:"workdir"`
+	Args []string `json:"args"`
 }
 
 func readConfig() (config []ProgramConfig, err error) {
@@ -412,7 +412,7 @@ func run(args []string, workDir string) error {
 		name,
 		args,
 		&os.ProcAttr{
-			Dir:   workDir,
+			Dir: workDir,
 			Files: []*os.File{nil, outfile, errfile},
 		})
 	if err != nil {
