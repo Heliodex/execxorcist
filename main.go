@@ -14,6 +14,22 @@ import (
 	"syscall"
 )
 
+type (
+	Process struct {
+		hash, args string
+		pid int
+		running bool
+	}
+
+	ProgramConfig struct {
+		Name string `json:"name"`
+		WorkDir string `json:"workdir"`
+		Args []string `json:"args"`
+	}
+)
+
+const alreadyFinished = "os: process already finished"
+
 var mainDir string
 
 func init() {
@@ -26,32 +42,64 @@ func init() {
 	mainDir = filepath.Join(homedir, ".xc")
 }
 
+func checkProc(hash, procsPath string) (exists bool) {
+	_, err := os.Stat(filepath.Join(procsPath, hash))
+
+	return err == nil
+}
+
 // mainly for identification atm
 func getHashPath() string {
 	hashPath := filepath.Join(mainDir, "hash")
+
 	if err := os.MkdirAll(hashPath, 0o755); err != nil {
 		fmt.Println("Error creating hash directory:", err)
 		os.Exit(1)
 	}
+
 	return hashPath
+}
+
+func getArgs(hash string) (args string, err error) {
+	argsFilePath := filepath.Join(getHashPath(), hash)
+	argsData, err := os.ReadFile(argsFilePath)
+	if err != nil {
+		return
+	}
+
+	return string(argsData), nil
 }
 
 func getLogsPath() string {
 	logsPath := filepath.Join(mainDir, "logs")
+
 	if err := os.MkdirAll(logsPath, 0o755); err != nil {
 		fmt.Println("Error creating logs directory:", err)
 		os.Exit(1)
 	}
+
 	return logsPath
 }
 
 func getProcsPath() string {
 	procsPath := filepath.Join(mainDir, "procs")
+
 	if err := os.MkdirAll(procsPath, 0o755); err != nil {
 		fmt.Println("Error creating processes directory:", err)
 		os.Exit(1)
 	}
+
 	return procsPath
+}
+
+func getPid(hash string) (pid int, err error) {
+	procFilePath := filepath.Join(getProcsPath(), hash)
+	procData, err := os.ReadFile(procFilePath)
+	if err != nil {
+		return
+	}
+	fmt.Sscanf(string(procData), "%d", &pid)
+	return
 }
 
 func idHash(data []string) string {
@@ -67,119 +115,10 @@ func isHash(h string) (ok bool) {
 	return true
 }
 
-type Process struct {
-	hash, args string
-	pid int
-	running bool
-}
-
-func checkProc(hash, procsPath string) (exists bool) {
-	_, err := os.Stat(filepath.Join(procsPath, hash))
-	return err == nil
-}
-
-func openLogs(hash string) (outfile, errfile *os.File, close func(), err error) {
-	const perms = os.O_CREATE | os.O_RDWR | os.O_APPEND
-	logsPath := getLogsPath()
-
-	outfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_out"), perms, 0o644)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to open output file: %w", err)
-	}
-
-	errfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_err"), perms, 0o644)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to open error file: %w", err)
-	}
-
-	return outfile, errfile, func() {
-		outfile.Close()
-		errfile.Close()
-	}, nil
-}
-
-func writeLogs(file *os.File) (err error) {
-	w := &bytes.Buffer{}
-	file.Seek(0, 0) // Reset file pointer to the beginning
-
-	if _, err = file.WriteTo(w); err != nil {
-		return
-	}
-
-	// get last 15 lines
-	lines := strings.Split(w.String(), "\n")
-	lines = lines[max(len(lines)-15, 0):]
-
-	for _, line := range lines {
-		fmt.Println("    ", line)
-	}
-	return
-}
-
-func getArgs(hash string) (args string, err error) {
-	argsFilePath := filepath.Join(getHashPath(), hash)
-	argsData, err := os.ReadFile(argsFilePath)
-	if err != nil {
-		return
-	}
-
-	return string(argsData), nil
-}
-
-func getPid(hash string) (pid int, err error) {
-	procFilePath := filepath.Join(getProcsPath(), hash)
-	procData, err := os.ReadFile(procFilePath)
-	if err != nil {
-		return
-	}
-
-	fmt.Sscanf(string(procData), "%d", &pid)
-	return
-}
-
-type ProgramConfig struct {
-	Name string `json:"name"`
-	WorkDir string `json:"workdir"`
-	Args []string `json:"args"`
-}
-
-func readConfig() (config []ProgramConfig, err error) {
-	// read xc.json file in the current directory
-	const configPath = "xc.json"
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("configuration file %s does not exist", configPath)
-	}
-
-	configFile, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read configuration file: %w", err)
-	}
-
-	if err = json.Unmarshal(configFile, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse configuration file: %w", err)
-	}
-	return
-}
-
-func checkName(name string) *ProgramConfig {
-	config, err := readConfig()
-	if err != nil {
-		fmt.Println("Error checking process name:", err)
-		os.Exit(1)
-	}
-
-	for _, c := range config {
-		if c.Name == name {
-			return &c
-		}
-	}
-	return nil
-}
-
 func killHash(hash string) error {
 	procsPath := getProcsPath()
-	fmt.Println()
 
+	fmt.Println()
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
 	}
@@ -201,31 +140,13 @@ func killHash(hash string) error {
 	if err = proc.Kill(); err != nil {
 		return fmt.Errorf("failed to kill process with PID %d: %w", pid, err)
 	}
-
 	fmt.Println("Successfully killed process with hash", hash, "and PID", pid)
-
 	if err = os.WriteFile(filepath.Join(procsPath, hash), []byte("-1\n"), 0o644); err != nil {
 		return fmt.Errorf("failed to update process file: %w", err)
 	}
+
 	return nil
 }
-
-func killConf() error {
-	config, err := readConfig()
-	if err != nil {
-		return fmt.Errorf("failed to read configuration: %w", err)
-	}
-
-	for _, c := range config {
-		hash := idHash(c.Args)
-		if err := killHash(hash); err != nil {
-			fmt.Printf("failed to kill program %v: %v\n", hash, err)
-		}
-	}
-	return nil
-}
-
-const alreadyFinished = "os: process already finished"
 
 func list() (err error) {
 	procsPath := getProcsPath()
@@ -238,7 +159,6 @@ func list() (err error) {
 		fmt.Println("No processes running.")
 		return
 	}
-
 	fmt.Println("Processes:")
 
 	procs := make([]Process, len(files))
@@ -282,6 +202,7 @@ func list() (err error) {
 
 	for _, proc := range procs {
 		var status string
+
 		if proc.running {
 			status = "running"
 		} else {
@@ -289,38 +210,69 @@ func list() (err error) {
 		}
 		fmt.Printf("%s | PID %7d | %s | %s\n", proc.hash, proc.pid, status, proc.args)
 	}
+
 	return
 }
 
-func logsHash(hash string) error {
-	procsPath := getProcsPath()
-	fmt.Println()
+func openLogs(hash string) (outfile, errfile *os.File, close func(), err error) {
+	const perms = os.O_CREATE | os.O_RDWR | os.O_APPEND
 
-	if !checkProc(hash, procsPath) {
-		return fmt.Errorf("process with hash %s does not exist", hash)
-	}
+	logsPath := getLogsPath()
+	outfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_out"), perms, 0o644)
 
-	outfile, errfile, closeFiles, err := openLogs(hash)
 	if err != nil {
-		return fmt.Errorf("failed to open log files: %w", err)
-	}
-	defer closeFiles()
-
-	fmt.Println("Logs for process", hash)
-
-	fmt.Println("Output logs:")
-	if err = writeLogs(outfile); err != nil {
-		return fmt.Errorf("failed to write output logs: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to open output file: %w", err)
 	}
 
-	fmt.Println("Error logs:")
-	if err = writeLogs(errfile); err != nil {
-		return fmt.Errorf("failed to write error logs: %w", err)
+	errfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_err"), perms, 0o644)
+
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to open error file: %w", err)
 	}
+
+	return outfile, errfile, func() {
+		outfile.Close()
+		errfile.Close()
+	}, nil
+}
+
+func readConfig() (config []ProgramConfig, err error) {
+	// read xc.json file in the current directory
+	const configPath = "xc.json"
+
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("configuration file %s does not exist", configPath)
+	}
+
+	configFile, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read configuration file: %w", err)
+	}
+
+	if err = json.Unmarshal(configFile, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse configuration file: %w", err)
+	}
+
+	return
+}
+
+func checkName(name string) *ProgramConfig {
+	config, err := readConfig()
+	if err != nil {
+		fmt.Println("Error checking process name:", err)
+		os.Exit(1)
+	}
+
+	for _, c := range config {
+		if c.Name == name {
+			return &c
+		}
+	}
+
 	return nil
 }
 
-func logsConf() error {
+func killConf() error {
 	config, err := readConfig()
 	if err != nil {
 		return fmt.Errorf("failed to read configuration: %w", err)
@@ -328,10 +280,12 @@ func logsConf() error {
 
 	for _, c := range config {
 		hash := idHash(c.Args)
-		if err := logsHash(hash); err != nil {
-			fmt.Printf("failed to retrieve logs for program %v: %v\n", hash, err)
+
+		if err := killHash(hash); err != nil {
+			fmt.Printf("failed to kill program %v: %v\n", hash, err)
 		}
 	}
+
 	return nil
 }
 
@@ -340,7 +294,6 @@ func removeHash(hash string) (err error) {
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
 	}
-
 	fmt.Println("Attempting to kill process with hash", hash)
 	if err = killHash(hash); err != nil {
 		fmt.Println("Error killing process:", err)
@@ -358,7 +311,6 @@ func removeHash(hash string) (err error) {
 			return fmt.Errorf("failed to remove %s: %w", path, err)
 		}
 	}
-
 	fmt.Println("Successfully removed process with hash", hash)
 	fmt.Println()
 	return
@@ -372,10 +324,12 @@ func removeConf() error {
 
 	for _, c := range config {
 		hash := idHash(c.Args)
+
 		if err := removeHash(hash); err != nil {
 			fmt.Printf("failed to remove program %v: %v\n", hash, err)
 		}
 	}
+
 	return nil
 }
 
@@ -386,11 +340,14 @@ func run(args []string, workDir string) error {
 
 	hashPath, procsPath := getHashPath(), getProcsPath()
 	outHash := idHash(args)
+
 	fmt.Println()
 
 	var restarting bool
+
 	if checkProc(outHash, procsPath) {
 		fmt.Printf("Process with hash %s already exists, restarting\n", outHash)
+
 		restarting = true
 	}
 
@@ -400,21 +357,18 @@ func run(args []string, workDir string) error {
 	}
 
 	name := args[0]
-	fmt.Println("Starting process", name)
 
+	fmt.Println("Starting process", name)
 	if !strings.Contains(name, "/") {
 		if name, err = exec.LookPath(name); err != nil {
 			return fmt.Errorf("failed to find executable: %w", err)
 		}
 	}
 
-	proc, err := os.StartProcess(
-		name,
-		args,
-		&os.ProcAttr{
-			Dir: workDir,
-			Files: []*os.File{nil, outfile, errfile},
-		})
+	proc, err := os.StartProcess(name, args, &os.ProcAttr{
+		Dir: workDir,
+		Files: []*os.File{nil, outfile, errfile},
+	})
 	if err != nil {
 		if !restarting {
 			if err := os.Remove(outfile.Name()); err != nil {
@@ -428,7 +382,6 @@ func run(args []string, workDir string) error {
 
 		return fmt.Errorf("failed to start process: %w", err)
 	}
-
 	fmt.Println("Started process with hash", outHash, "and pid", proc.Pid)
 
 	// Write process ID to a file
@@ -436,6 +389,7 @@ func run(args []string, workDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create process file: %w", err)
 	}
+
 	defer procfile.Close()
 
 	if _, err = fmt.Fprintf(procfile, "%d\n", proc.Pid); err != nil {
@@ -447,11 +401,13 @@ func run(args []string, workDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create hash file: %w", err)
 	}
+
 	defer hashFile.Close()
 
 	if _, err = hashFile.WriteString(strings.Join(args, " ")); err != nil {
 		return fmt.Errorf("failed to write data to hash file: %w", err)
 	}
+
 	return nil
 }
 
@@ -466,6 +422,72 @@ func runConf() error {
 			fmt.Printf("failed to run command %v: %v\n", c.Args, err)
 		}
 	}
+
+	return nil
+}
+
+func writeLogs(file *os.File) (err error) {
+	w := &bytes.Buffer{}
+
+	file.Seek(0, 0) // Reset file pointer to the beginning
+
+	if _, err = file.WriteTo(w); err != nil {
+		return
+	}
+
+	// get last 15 lines
+	lines := strings.Split(w.String(), "\n")
+	lines = lines[max(len(lines)-15, 0):]
+
+	for _, line := range lines {
+		fmt.Println("    ", line)
+	}
+
+	return
+}
+
+func logsHash(hash string) error {
+	procsPath := getProcsPath()
+
+	fmt.Println()
+	if !checkProc(hash, procsPath) {
+		return fmt.Errorf("process with hash %s does not exist", hash)
+	}
+
+	outfile, errfile, closeFiles, err := openLogs(hash)
+	if err != nil {
+		return fmt.Errorf("failed to open log files: %w", err)
+	}
+
+	defer closeFiles()
+
+	fmt.Println("Logs for process", hash)
+	fmt.Println("Output logs:")
+	if err = writeLogs(outfile); err != nil {
+		return fmt.Errorf("failed to write output logs: %w", err)
+	}
+	fmt.Println("Error logs:")
+	if err = writeLogs(errfile); err != nil {
+		return fmt.Errorf("failed to write error logs: %w", err)
+	}
+
+	return nil
+}
+
+func logsConf() error {
+	config, err := readConfig()
+	if err != nil {
+		return fmt.Errorf("failed to read configuration: %w", err)
+	}
+
+	for _, c := range config {
+		hash := idHash(c.Args)
+
+		if err := logsHash(hash); err != nil {
+			fmt.Printf("failed to retrieve logs for program %v: %v\n", hash, err)
+		}
+	}
+
 	return nil
 }
 
@@ -479,7 +501,6 @@ func main() {
 	switch os.Args[1] {
 	case "help":
 		fmt.Println("WELCOME TO HELP")
-
 	case "kill":
 		if nargs < 3 {
 			if err := killConf(); err != nil {
@@ -500,13 +521,11 @@ func main() {
 			fmt.Println("Command ran with unknown identifier:", arg)
 			os.Exit(1)
 		}
-
 	case "list":
 		if err := list(); err != nil {
 			fmt.Println("Error listing processes:", err)
 			os.Exit(1)
 		}
-
 	case "logs":
 		if nargs < 3 {
 			if err := logsConf(); err != nil {
@@ -527,7 +546,6 @@ func main() {
 			fmt.Println("Command ran with unknown identifier:", arg)
 			os.Exit(1)
 		}
-
 	case "remove":
 		if nargs < 3 {
 			if err := removeConf(); err != nil {
@@ -548,7 +566,6 @@ func main() {
 			fmt.Println("Command ran with unknown identifier:", arg)
 			os.Exit(1)
 		}
-
 	case "run":
 		if nargs < 3 {
 			if err := runConf(); err != nil {
@@ -569,7 +586,6 @@ func main() {
 			fmt.Println("Command ran with unknown identifier:", arg)
 			os.Exit(1)
 		}
-
 	default:
 		fmt.Println("Unknown command", os.Args[1])
 		os.Exit(1)

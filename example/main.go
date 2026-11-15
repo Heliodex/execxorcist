@@ -20,9 +20,12 @@ func main() {
 
 	// print upon kill with ctrl c
 	c := make(chan os.Signal, 1)
+
 	signal.Notify(c, os.Interrupt)
+
 	go func() {
 		i := <-c
+
 		fmt.Println("Process interrupted:", i)
 		os.Exit(0)
 	}()
