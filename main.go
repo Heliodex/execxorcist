@@ -62,6 +62,7 @@ func getHashPath() string {
 
 func getArgs(hash string) (args string, err error) {
 	argsFilePath := filepath.Join(getHashPath(), hash)
+
 	argsData, err := os.ReadFile(argsFilePath)
 	if err != nil {
 		return
@@ -94,11 +95,14 @@ func getProcsPath() string {
 
 func getPid(hash string) (pid int, err error) {
 	procFilePath := filepath.Join(getProcsPath(), hash)
+
 	procData, err := os.ReadFile(procFilePath)
 	if err != nil {
 		return
 	}
+
 	fmt.Sscanf(string(procData), "%d", &pid)
+
 	return
 }
 
@@ -119,6 +123,7 @@ func killHash(hash string) error {
 	procsPath := getProcsPath()
 
 	fmt.Println()
+
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
 	}
@@ -140,7 +145,9 @@ func killHash(hash string) error {
 	if err = proc.Kill(); err != nil {
 		return fmt.Errorf("failed to kill process with PID %d: %w", pid, err)
 	}
+
 	fmt.Println("Successfully killed process with hash", hash, "and PID", pid)
+
 	if err = os.WriteFile(filepath.Join(procsPath, hash), []byte("-1\n"), 0o644); err != nil {
 		return fmt.Errorf("failed to update process file: %w", err)
 	}
@@ -150,6 +157,7 @@ func killHash(hash string) error {
 
 func list() (err error) {
 	procsPath := getProcsPath()
+
 	files, err := os.ReadDir(procsPath)
 	if err != nil {
 		return fmt.Errorf("failed to read processes directory: %w", err)
@@ -159,6 +167,7 @@ func list() (err error) {
 		fmt.Println("No processes running.")
 		return
 	}
+
 	fmt.Println("Processes:")
 
 	procs := make([]Process, len(files))
@@ -208,6 +217,7 @@ func list() (err error) {
 		} else {
 			status = "stopped"
 		}
+
 		fmt.Printf("%s | PID %7d | %s | %s\n", proc.hash, proc.pid, status, proc.args)
 	}
 
@@ -218,14 +228,13 @@ func openLogs(hash string) (outfile, errfile *os.File, close func(), err error) 
 	const perms = os.O_CREATE | os.O_RDWR | os.O_APPEND
 
 	logsPath := getLogsPath()
-	outfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_out"), perms, 0o644)
 
+	outfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_out"), perms, 0o644)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to open output file: %w", err)
 	}
 
 	errfile, err = os.OpenFile(filepath.Join(logsPath, hash+"_err"), perms, 0o644)
-
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to open error file: %w", err)
 	}
@@ -294,7 +303,9 @@ func removeHash(hash string) (err error) {
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
 	}
+
 	fmt.Println("Attempting to kill process with hash", hash)
+
 	if err = killHash(hash); err != nil {
 		fmt.Println("Error killing process:", err)
 	}
@@ -311,8 +322,10 @@ func removeHash(hash string) (err error) {
 			return fmt.Errorf("failed to remove %s: %w", path, err)
 		}
 	}
+
 	fmt.Println("Successfully removed process with hash", hash)
 	fmt.Println()
+
 	return
 }
 
@@ -359,6 +372,7 @@ func run(args []string, workDir string) error {
 	name := args[0]
 
 	fmt.Println("Starting process", name)
+
 	if !strings.Contains(name, "/") {
 		if name, err = exec.LookPath(name); err != nil {
 			return fmt.Errorf("failed to find executable: %w", err)
@@ -382,6 +396,7 @@ func run(args []string, workDir string) error {
 
 		return fmt.Errorf("failed to start process: %w", err)
 	}
+
 	fmt.Println("Started process with hash", outHash, "and pid", proc.Pid)
 
 	// Write process ID to a file
@@ -450,6 +465,7 @@ func logsHash(hash string) error {
 	procsPath := getProcsPath()
 
 	fmt.Println()
+
 	if !checkProc(hash, procsPath) {
 		return fmt.Errorf("process with hash %s does not exist", hash)
 	}
@@ -463,10 +479,13 @@ func logsHash(hash string) error {
 
 	fmt.Println("Logs for process", hash)
 	fmt.Println("Output logs:")
+
 	if err = writeLogs(outfile); err != nil {
 		return fmt.Errorf("failed to write output logs: %w", err)
 	}
+
 	fmt.Println("Error logs:")
+
 	if err = writeLogs(errfile); err != nil {
 		return fmt.Errorf("failed to write error logs: %w", err)
 	}
